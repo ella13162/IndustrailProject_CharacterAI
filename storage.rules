@@ -1,0 +1,23 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Character images
+    match /characters/{fileName} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+        // Only allow image files
+        && request.resource.contentType.matches('image/.*')
+        // Max file size: 5MB
+        && request.resource.size < 5 * 1024 * 1024
+        // Filename must include timestamp to prevent overwrites
+        && fileName.matches('[0-9]+_.*');
+      allow delete: if isAuthenticated()
+        && request.auth.uid == resource.metadata.uploadedBy;
+    }
+  }
+}

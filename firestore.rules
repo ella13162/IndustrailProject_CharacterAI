@@ -1,0 +1,98 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Updated admin check to use the users array in admin document
+    function isAdmin() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/admin/admin).data.users.hasAny([request.auth.uid]);
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Admin collection - allow read/write for admin document
+    match /admin/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && docId == 'admin' && (
+        !exists(/databases/$(database)/documents/admin/admin) || 
+        get(/databases/$(database)/documents/admin/admin).data.users.hasAny([request.auth.uid])
+      );
+    }
+
+    // User profiles - allow admins to read all users and manage them
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin(); // Allow admins to list all users
+      allow write: if isOwner(userId) || isAdmin();
+      
+      // User's activity subcollection
+      match /activity/{activityId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    // Characters collection - updated rules
+    match /characters/{characterId} {
+      // Allow read if:
+      // 1. Character is not custom (default character) OR
+      // 2. User is the creator OR
+      // 3. User is admin
+      allow read: if isAuthenticated() && (
+        !resource.data.isCustom || 
+        resource.data.createdBy == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Allow create if:
+      // 1. User is creating a custom character for themselves OR
+      // 2. User is admin
+      allow create: if isAuthenticated() && (
+        (request.resource.data.isCustom == true && 
+         request.resource.data.createdBy == request.auth.uid) ||
+        isAdmin()
+      );
+
+      // Allow update/delete if:
+      // 1. User is modifying their own custom character OR
+      // 2. User is admin
+      allow update, delete: if isAuthenticated() && (
+        (resource.data.isCustom == true && 
+         resource.data.createdBy == request.auth.uid) ||
+        isAdmin()
+      );
+    }
+
+    // Chat data
+    match /chats/{userId}/characters/{characterId}/sessions/{sessionId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) || isAdmin();
+      
+      // Messages in chat sessions
+      match /messages/{messageId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    // Public inquiries
+    match /inquiries/{inquiryId} {
+      allow read: if isAdmin();
+      allow create: if true; // Allow anyone to create inquiries
+      allow update, delete: if isAdmin();
+    }
+
+    // System settings
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}
